@@ -1,8 +1,7 @@
-import axios from "axios";
-import { getVisRequestServer } from "./env";
+import { generateChartUrlOffline } from "./generate-offline";
 
 /**
- * Generate a chart URL using the provided configuration.
+ * Generate a chart URL using offline chart generation.
  * @param type The type of chart to generate
  * @param options Chart options
  * @returns {Promise<string>} The generated chart URL.
@@ -13,21 +12,6 @@ export async function generateChartUrl(
   // biome-ignore lint/suspicious/noExplicitAny: <explanation>
   options: Record<string, any>,
 ): Promise<string> {
-  const url = getVisRequestServer();
-
-  const response = await axios.post(
-    url,
-    {
-      type,
-      ...options,
-      source: "mcp-server-chart",
-    },
-    {
-      headers: {
-        "Content-Type": "application/json",
-      },
-    },
-  );
-
-  return response.data.resultObj;
+  // 直接使用离线模式生成图表
+  return await generateChartUrlOffline(type, options);
 }

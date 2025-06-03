@@ -5,7 +5,7 @@
   "main": "build/index.js",
   "type": "module",
   "scripts": {
-    "prebuild": "rm -rf build/*",
+    "prebuild": "rimraf build",
     "build": "tsc && tsc-alias -p tsconfig.json",
     "start": "npx @modelcontextprotocol/inspector node build/index.js",
     "prepare": "husky && npm run build",
@@ -22,8 +22,15 @@
   "bin": {
     "mcp-server-chart": "./build/index.js"
   },
-  "files": ["build"],
-  "keywords": ["antv", "mcp", "data-visualization", "chart"],
+  "files": [
+    "build"
+  ],
+  "keywords": [
+    "antv",
+    "mcp",
+    "data-visualization",
+    "chart"
+  ],
   "repository": {
     "type": "git",
     "url": "https://github.com/antvis/mcp-server-chart"
@@ -35,7 +42,6 @@
   "license": "MIT",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.11.4",
-    "axios": "^1.9.0",
     "zod": "^3.25.16",
     "zod-to-json-schema": "^3.24.5"
   },
@@ -45,6 +51,7 @@
     "@types/node": "^22.15.21",
     "husky": "^9.1.7",
     "lint-staged": "^15.5.2",
+    "rimraf": "^6.0.1",
     "tsc-alias": "^1.8.16",
     "typescript": "^5.8.3",
     "vitest": "^3.1.4"
