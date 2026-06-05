@@ -1,13 +1,23 @@
 import { createServer } from 'http';
-import { readFileSync } from 'fs';
+import { createReadStream, readFileSync } from 'fs';
+import { mkdir, stat, writeFile } from 'fs/promises';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
+import { randomUUID } from 'crypto';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { generateChartUrlOffline } from './build/utils/generate-offline.js';
+import { createServer as createMcpServer } from './build/server.js';
+import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const PORT = 3000;
+const CHART_IMAGE_DIR = process.env.CHART_IMAGE_DIR || join(__dirname, 'charts');
+const CHART_IMAGE_BASE_URL = process.env.CHART_IMAGE_BASE_URL || '';
+const execFileAsync = promisify(execFile);
+const activeSseTransports = {};
 
 // CORS 头
 const corsHeaders = {
@@ -51,16 +61,84 @@ function sendHTML(res, html) {
   res.end(html);
 }
 
-function toChartPayload(chartResultText) {
+async function handleSseRequest(req, res, pathname) {
+  if (req.method === 'GET' && pathname === '/sse') {
+    const mcpServer = createMcpServer();
+    const transport = new SSEServerTransport('/messages', res);
+    activeSseTransports[transport.sessionId] = { transport, server: mcpServer };
+
+    res.on('close', async () => {
+      delete activeSseTransports[transport.sessionId];
+      try {
+        await mcpServer.close();
+      } catch (error) {
+        console.error('Error closing MCP SSE server:', error);
+      }
+    });
+
+    try {
+      await mcpServer.connect(transport);
+      await transport.send({
+        jsonrpc: '2.0',
+        method: 'sse/connection',
+        params: { message: 'SSE Connection established' },
+      });
+    } catch (error) {
+      console.error('Error connecting SSE transport:', error);
+      if (!res.headersSent) {
+        res.writeHead(500).end('Error connecting SSE transport');
+      }
+    }
+
+    return true;
+  }
+
+  if (req.method === 'POST' && pathname === '/messages') {
+    const sessionId = new URL(req.url, `http://localhost:${PORT}`).searchParams.get('sessionId');
+
+    if (!sessionId) {
+      res.writeHead(400).end('No sessionId');
+      return true;
+    }
+
+    const active = activeSseTransports[sessionId];
+
+    if (!active) {
+      res.writeHead(400).end('No active transport');
+      return true;
+    }
+
+    await active.transport.handlePostMessage(req, res);
+    return true;
+  }
+
+  return false;
+}
+
+async function toChartPayload(chartResultText, req) {
   const chart = JSON.parse(chartResultText);
 
   if (chart.status !== 'success' || !chart.svg) {
     throw new Error(chart.error || 'Chart generation failed');
   }
 
+  await mkdir(CHART_IMAGE_DIR, { recursive: true });
+
+  const id = `${Date.now()}_${randomUUID().slice(0, 8)}`;
+  const svgPath = join(CHART_IMAGE_DIR, `chart_${id}.svg`);
+  const pngFilename = `chart_${id}.png`;
+  const pngPath = join(CHART_IMAGE_DIR, pngFilename);
+
+  await writeFile(svgPath, chart.svg, 'utf8');
+  await execFileAsync('rsvg-convert', ['-f', 'png', '-o', pngPath, svgPath]);
+
+  const requestOrigin = `http://${req.headers.host || `localhost:${PORT}`}`;
+  const baseUrl = CHART_IMAGE_BASE_URL || `${requestOrigin}/charts`;
+
   return {
     chart,
-    chartUrl: `data:image/svg+xml;base64,${Buffer.from(chart.svg, 'utf8').toString('base64')}`,
+    chartUrl: `${baseUrl.replace(/\/$/, '')}/${pngFilename}`,
+    imageFile: pngFilename,
   };
 }
 
@@ -72,6 +150,10 @@ const server = createServer(async (req, res) => {
   console.log(`${new Date().toISOString()} - ${req.method} ${pathname}`);
 
   try {
+    if (await handleSseRequest(req, res, pathname)) {
+      return;
+    }
+
     // 处理 OPTIONS 请求（CORS 预检）
     if (req.method === 'OPTIONS') {
       res.writeHead(200, corsHeaders);
@@ -96,8 +178,37 @@ const server = createServer(async (req, res) => {
       sendJSON(res, {
         status: 'ok',
         timestamp: new Date().toISOString(),
-        service: 'MCP Chart Server - Offline Demo'
+        service: 'MCP Chart Server - Offline Demo + SSE',
+        sse: '/sse',
+        messages: '/messages'
       });
+      return;
+    }
+
+    if (pathname.startsWith('/charts/') && req.method === 'GET') {
+      const filename = decodeURIComponent(pathname.replace('/charts/', ''));
+
+      if (!filename || filename.includes('/') || filename.includes('..') || !filename.endsWith('.png')) {
+        res.writeHead(400, corsHeaders);
+        res.end('Invalid chart filename');
+        return;
+      }
+
+      const filePath = join(CHART_IMAGE_DIR, filename);
+
+      try {
+        const fileInfo = await stat(filePath);
+        res.writeHead(200, {
+          'Content-Type': 'image/png',
+          'Content-Length': fileInfo.size,
+          'Cache-Control': 'public, max-age=3600',
+          ...corsHeaders
+        });
+        createReadStream(filePath).pipe(res);
+      } catch {
+        res.writeHead(404, corsHeaders);
+        res.end('Chart image not found');
+      }
       return;
     }
 
@@ -119,12 +230,13 @@ const server = createServer(async (req, res) => {
 
         const startTime = Date.now();
         const chartResultText = await generateChartUrlOffline(type, { data, width, height });
-        const { chart, chartUrl } = toChartPayload(chartResultText);
+        const { chart, chartUrl, imageFile } = await toChartPayload(chartResultText, req);
         const endTime = Date.now();
 
         sendJSON(res, {
           success: true,
           chartUrl,
+          imageFile,
           chart,
           type,
           generationTime: endTime - startTime,
@@ -162,13 +274,14 @@ const server = createServer(async (req, res) => {
           try {
             const chartStartTime = Date.now();
             const chartResultText = await generateChartUrlOffline(type, { data, width, height });
-            const { chart, chartUrl } = toChartPayload(chartResultText);
+            const { chart, chartUrl, imageFile } = await toChartPayload(chartResultText, req);
             const chartEndTime = Date.now();
 
             results.push({
               type,
               success: true,
               chartUrl,
+              imageFile,
               chart,
               generationTime: chartEndTime - chartStartTime,
               dataPoints: data ? data.length : 0
@@ -296,6 +409,8 @@ const server = createServer(async (req, res) => {
         'GET /',
         'GET /demo',
         'GET /health',
+        'GET /sse',
+        'POST /messages?sessionId=...',
         'GET /api',
         'GET /api/chart-types',
         'POST /api/generate-chart',
