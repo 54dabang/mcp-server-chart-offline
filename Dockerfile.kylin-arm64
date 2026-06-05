@@ -38,7 +38,7 @@ RUN npm install --ignore-scripts
 COPY . .
 RUN npm run build \
     && node build/index.js --help \
-    && node -e "import('./build/utils/generate-offline.js').then(async ({ generateChartUrlOffline }) => { const result = await generateChartUrlOffline('pie', { data: [{ category: 'A', value: 1 }, { category: 'B', value: 2 }] }); if (!String(result).startsWith('data:image/svg+xml;base64,')) throw new Error('offline chart smoke test failed'); console.log('offline chart smoke test ok'); })"
+    && node -e "import('./build/utils/generate-offline.js').then(async ({ generateChartUrlOffline }) => { const result = JSON.parse(await generateChartUrlOffline('pie', { data: [{ category: 'A', value: 1 }, { category: 'B', value: 2 }] })); if (result.status !== 'success' || !String(result.svg).startsWith('<svg')) throw new Error('offline chart smoke test failed'); console.log('offline chart smoke test ok'); })"
 
 EXPOSE 3000
 
