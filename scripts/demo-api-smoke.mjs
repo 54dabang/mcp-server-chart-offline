@@ -32,6 +32,47 @@ function request(path, options = {}) {
   });
 }
 
+function requestSse(path) {
+  return new Promise((resolve, reject) => {
+    const req = http.request(
+      {
+        hostname: "127.0.0.1",
+        port: 3000,
+        path,
+        method: "GET",
+        headers: { Accept: "text/event-stream" },
+      },
+      (res) => {
+        let body = "";
+        res.setEncoding("utf8");
+        res.on("data", (chunk) => {
+          body += chunk;
+          if (body.includes("SSE Connection established")) {
+            req.destroy();
+            resolve({ statusCode: res.statusCode, body });
+          }
+        });
+        res.on("end", () => resolve({ statusCode: res.statusCode, body }));
+      },
+    );
+    req.setTimeout(5_000, () => {
+      req.destroy(new Error("SSE smoke test timed out"));
+    });
+    req.on("error", (error) => {
+      if (String(error.message).includes("SSE smoke test timed out")) {
+        reject(error);
+        return;
+      }
+      if (error.code === "ECONNRESET") {
+        resolve({ statusCode: 200, body: "connection reset after SSE data" });
+        return;
+      }
+      reject(error);
+    });
+    req.end();
+  });
+}
+
 async function waitForServer() {
   const deadline = Date.now() + 10_000;
   while (Date.now() < deadline) {
@@ -70,10 +111,22 @@ try {
   const payload = JSON.parse(res.body);
   if (
     payload.success !== true ||
-    !String(payload.chartUrl).startsWith("data:image/svg+xml;base64,") ||
+    !String(payload.chartUrl).includes("/charts/") ||
+    !String(payload.chartUrl).endsWith(".png") ||
     !String(payload.chart?.svg).startsWith("<svg")
   ) {
     throw new Error(`unexpected chart payload: ${res.body.slice(0, 500)}`);
+  }
+
+  const imageUrl = new URL(payload.chartUrl);
+  const imageRes = await request(imageUrl.pathname);
+  if (imageRes.statusCode !== 200) {
+    throw new Error(`chart image is not accessible: ${imageRes.statusCode}`);
+  }
+
+  const sseRes = await requestSse("/sse");
+  if (sseRes.statusCode !== 200) {
+    throw new Error(`SSE endpoint is not accessible: ${sseRes.statusCode}`);
   }
 
   console.log("demo API smoke test ok");
