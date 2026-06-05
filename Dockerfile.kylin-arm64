@@ -7,7 +7,6 @@ LABEL description="Offline MCP chart server - Kylin ARM64 build"
 ARG NODE_VERSION=22.21.1
 
 ENV PATH="/usr/local/bin:$PATH" \
-    NODE_ENV=production \
     PORT=3000 \
     npm_config_build_from_source=true \
     npm_config_foreground_scripts=true
