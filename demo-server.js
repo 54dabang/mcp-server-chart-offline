@@ -51,6 +51,19 @@ function sendHTML(res, html) {
   res.end(html);
 }
 
+function toChartPayload(chartResultText) {
+  const chart = JSON.parse(chartResultText);
+
+  if (chart.status !== 'success' || !chart.svg) {
+    throw new Error(chart.error || 'Chart generation failed');
+  }
+
+  return {
+    chart,
+    chartUrl: `data:image/svg+xml;base64,${Buffer.from(chart.svg, 'utf8').toString('base64')}`,
+  };
+}
+
 // 创建服务器
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
@@ -105,12 +118,14 @@ const server = createServer(async (req, res) => {
         }
 
         const startTime = Date.now();
-        const chartUrl = await generateChartUrlOffline(type, { data, width, height });
+        const chartResultText = await generateChartUrlOffline(type, { data, width, height });
+        const { chart, chartUrl } = toChartPayload(chartResultText);
         const endTime = Date.now();
 
         sendJSON(res, {
           success: true,
           chartUrl,
+          chart,
           type,
           generationTime: endTime - startTime,
           dataPoints: data.length,
@@ -146,13 +161,15 @@ const server = createServer(async (req, res) => {
           
           try {
             const chartStartTime = Date.now();
-            const chartUrl = await generateChartUrlOffline(type, { data, width, height });
+            const chartResultText = await generateChartUrlOffline(type, { data, width, height });
+            const { chart, chartUrl } = toChartPayload(chartResultText);
             const chartEndTime = Date.now();
 
             results.push({
               type,
               success: true,
               chartUrl,
+              chart,
               generationTime: chartEndTime - chartStartTime,
               dataPoints: data ? data.length : 0
             });
