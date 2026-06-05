@@ -1,0 +1,46 @@
+ARG KYLIN_BASE_IMAGE=macrosan/kylin:v10-sp3-2403
+FROM ${KYLIN_BASE_IMAGE}
+
+LABEL name="mcp-server-chart-offline"
+LABEL description="Offline MCP chart server - Kylin ARM64 build"
+
+ARG NODE_VERSION=22.21.1
+
+ENV PATH="/usr/local/bin:$PATH" \
+    NODE_ENV=production \
+    PORT=3000 \
+    npm_config_build_from_source=true \
+    npm_config_foreground_scripts=true
+
+RUN yum update -y && yum install -y \
+    curl \
+    xz \
+    tar \
+    python3 \
+    make \
+    gcc \
+    gcc-c++ \
+    glibc-langpack-en \
+    glibc-langpack-zh \
+    && yum clean all
+
+RUN curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-arm64.tar.xz" -o /tmp/node.tar.xz \
+    && tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1 \
+    && rm -f /tmp/node.tar.xz \
+    && node --version \
+    && npm --version \
+    && npm install -g node-gyp@9.4.1
+
+WORKDIR /app
+
+COPY package*.json ./
+RUN npm install
+
+COPY . .
+RUN npm run build \
+    && node build/index.js --help \
+    && node -e "import('./build/utils/generate-offline.js').then(async ({ generateChartUrlOffline }) => { const result = await generateChartUrlOffline('pie', { data: [{ category: 'A', value: 1 }, { category: 'B', value: 2 }] }); if (!String(result).startsWith('data:image/svg+xml;base64,')) throw new Error('offline chart smoke test failed'); console.log('offline chart smoke test ok'); })"
+
+EXPOSE 3000
+
+CMD ["node", "build/index.js", "--transport", "streamable", "--port", "3000", "--endpoint", "/mcp"]

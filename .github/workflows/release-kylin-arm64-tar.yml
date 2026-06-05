@@ -1,0 +1,63 @@
+name: Release Kylin ARM64 Docker Tar
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to create or update"
+        required: true
+        default: "kylin-arm64-tar"
+      kylin_base_image:
+        description: "Kylin ARM64 base image"
+        required: true
+        default: "macrosan/kylin:v10-sp3-2403"
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          install: true
+
+      - name: Build Kylin ARM64 image tar
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile.kylin-arm64
+          platforms: linux/arm64
+          build-args: |
+            KYLIN_BASE_IMAGE=${{ inputs.kylin_base_image }}
+          tags: mcp-server-chart-offline:kylin-arm64
+          outputs: type=docker,dest=mcp-server-chart-offline-kylin-arm64.tar
+
+      - name: Checksums
+        run: sha256sum mcp-server-chart-offline-kylin-arm64.tar > mcp-server-chart-offline-kylin-arm64.tar.sha256
+
+      - name: Upload Release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag }}
+          name: ${{ inputs.tag }}
+          body: |
+            Kylin Linux ARM64 Docker image tar for `mcp-server-chart-offline`.
+
+            Base image:
+            `${{ inputs.kylin_base_image }}`
+
+            The image is built with GitHub hosted ARM64 runners using Docker Buildx `linux/arm64`.
+            The project generates charts as pure SVG and does not use native canvas/skia rendering
+            addons, but npm native-addon source-build flags are enabled defensively.
+
+            Default command starts MCP streamable HTTP on `/mcp` port `3000`.
+            You can override the command to run stdio, SSE, or `demo-server.js`.
+            Final verification on the target 64K-page Linux server is still recommended.
+          files: |
+            mcp-server-chart-offline-kylin-arm64.tar
+            mcp-server-chart-offline-kylin-arm64.tar.sha256
